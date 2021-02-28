@@ -300,13 +300,15 @@ void i2c_reply_cmd(uchar cmd, char* ret) {
         int v = _i2c_recv_buf[2];
         sprintf(ret, "%d-%d", id, v);
         if(id == 1){
-            setPWM3(v);
-        }else if(id == 2){
-            setPWM4(v);
-        }else if(id == 3){
             setPWM1(v);
-        }else{
+        }else if(id == 2){
+            setPWM1(v);
+        }else if(id == 3){
             setPWM3(v);
+        }else if(id == 4){
+            setPWM4(v);
+        }else{
+            setPWM1(v);
         }
     }else if(cmd == I2C_CMD_SET_LED){
         int id = _i2c_recv_buf[1];
