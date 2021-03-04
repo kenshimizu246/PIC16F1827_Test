@@ -49,20 +49,22 @@ typedef unsigned char uchar;
 
 void init_chip();
 void start_interrupt();
+void __interrupt() isr(void);
+
 void _i2c_init_slave(unsigned char i2c_addr);
 void _i2c_start_slave_interrupt();
 void _i2c_slave_isr(void);
-void __interrupt() isr(void);
 void _i2c_slave_recv_byte();
 void _i2c_salve_bus_collision_isr(void);
 void _i2c_on_cmd_received(uchar cmd);
-void i2c_reply_cmd(uchar cmd, char* ret);
+void _i2c_reply_cmd(uchar cmd, char* ret);
 void _i2c_slave_send_byte(void);
 
-bool InitDevice();
-bool setPWM1(int per);
-bool setPWM3(int per);
-bool setPWM4(int per);
+bool _pwm_init();
+bool _pwm_set_lsb1(int per);
+bool _pwm_set_lsb2(int per);
+bool _pwm_set_lsb3(int per);
+bool _pwm_set_lsb4(int per);
 
 static char _i2c_send_buf[I2C_SEND_BUFFER_LENGTH + 1];  // send data buffer
 static uchar _i2c_send_ptr = 0;                      // pointer of send data
@@ -86,7 +88,7 @@ int main(int argc, char** argv) {
     init_chip();
     start_interrupt();
     
-    if(!InitDevice()){
+    if(!_pwm_init()){
         return 0;
     }
 
@@ -280,13 +282,13 @@ void _i2c_slave_prepare_send_data(uchar* data) {
 
 void _i2c_on_cmd_received(uchar cmd) {
     char ret[8];
-    i2c_reply_cmd(cmd, ret);
+    _i2c_reply_cmd(cmd, ret);
     _i2c_slave_prepare_send_data(ret);
     uchar* len = strlen(ret);
     SSP1BUF = len;
 }
 
-void i2c_reply_cmd(uchar cmd, char* ret) {
+void _i2c_reply_cmd(uchar cmd, char* ret) {
     // implements application code for process message
     // and returns reply message to i2c master
 
@@ -302,11 +304,11 @@ void i2c_reply_cmd(uchar cmd, char* ret) {
         if(id == 1){
             setPWM1(v);
         }else if(id == 2){
-            setPWM1(v);
+            _pwm_set_lsb2(v);
         }else if(id == 3){
-            setPWM3(v);
+            _pwm_set_lsb3(v);
         }else if(id == 4){
-            setPWM4(v);
+            _pwm_set_lsb4(v);
         }else{
             setPWM1(v);
         }
@@ -326,7 +328,70 @@ void i2c_reply_cmd(uchar cmd, char* ret) {
     }
 }
 
-bool InitDevice()
+/*
+ * FOSC : The Frequency of the OSCilator - The FOSC bits determine the type of 
+ * oscillator that will be used when the device is first powered. 
+ * The oscilator is the clock that controls the execution of the instructions.
+ * TOSC : The Time of OSC is the period of Fosc or 1/FOSC. (TOSC = 1/FOSC)
+ * OSCCON : Oscillator Control Registers
+ * PRx : The PWM period is specified by the PRx register ofTimer2/4/6. 
+ * The PWM period can be calculated using the formula
+ * PWM Period = [(PRx) + 1] * 4 * TOSC * (TMRx Prescale Value) 
+ * Example:
+ * OSCCON : 4MHz
+ * PR2 : 255
+ * TMR2 Prescaler : 64 **
+ * Execution Cycle: (1s/4MHz) * 4 clock = 1 micro second
+ * PWM Period : [(PRx) + 1] * 4 * Tosc * (TMRx Prescale Value)
+ *              (255 + 1) * 4 * 1 * 64
+ *              65535 micro second
+ *              4.096 milli seconds
+ * Palse Width : (CCPRxL:CCPxCON<5:4>) * Tosc * (TMRxPrescale Value)
+ * CCPRxL : 10 -> 10 * 1 * 16 = 160 micro sec = 0.16ms
+ * CCPRxL : 25 -> 25 * 1 * 16 = 400 micro sec = 0.4ms
+ * CCPRxL : 40 -> 40 * 1 * 16 = 640 micro sec = 0.64ms
+ * 
+ * **TXCON
+ * bit 7 Unimplemented: Read as ?0?
+ * bit 6-3 TxOUTPS<3:0>: Timerx Output Postscaler Select bits
+ * 0000 = 1:1 Postscaler
+ * 0001 = 1:2 Postscaler
+ * 0010 = 1:3 Postscaler
+ * 0011 = 1:4 Postscaler
+ * 0100 = 1:5 Postscaler
+ * 0101 = 1:6 Postscaler
+ * 0110 = 1:7 Postscaler
+ * 0111 = 1:8 Postscaler
+ * 1000 = 1:9 Postscaler
+ * 1001 = 1:10 Postscaler
+ * 1010 = 1:11 Postscaler
+ * 1011 = 1:12 Postscaler
+ * 1100 = 1:13 Postscaler
+ * 1101 = 1:14 Postscaler
+ * 1110 = 1:15 Postscaler
+ * 1111 = 1:16 Postscaler
+ * bit 2 TMRxON: Timerx On bit
+ * 1 = Timerx is on
+ * 0 = Timerx is off
+ * bit 1-0 TxCKPS<1:0>: Timer2-type Clock Prescale Select bits
+ * 00 = Prescaler is 1
+ * 01 = Prescaler is 4
+ * 10 = Prescaler is 16
+ * 11 = Prescaler is 64
+ * 
+ * SG90 Tower Pro
+ * Position "0" (1.5 ms pulse) is middle, "90" (~2ms pulse) is middle,
+is all the way to the right, "-90" (~1ms pulse) is all the way to the left.
+ * voltage: 4.8 - 6
+ * 
+ * SG90 DM DIY MORE
+ * Operating voltage: 3.0V~7.2V
+ * 
+ * Memo:
+ * Period : 20,000 mic sec
+ * Duty Cycle : 1000 to 2000 mic sec.
+ */
+bool _pwm_init()
 {
     CCP3CON = 0b00001100;
     CCP4CON = 0b00001100;
@@ -334,204 +399,33 @@ bool InitDevice()
     
     CCPTMRS = 0b00000000;
     
-    T2CON = 0b00000100;
-    PR2 = 255;              // PWM Period?1.28 * 10^4(= (255(PR2) + 1) * 1 / 8000000(CLOCK) * 1(Prescale))
+    T2CON = 0b00000111;
+    PR2 = 255;
+
     
     return true;
 }
-
-bool setPWM3(int per)
-{
-    switch(per)
-    {
-        // 0%
-        case 0:
-            CCPR3L = 0b00000000;
-            break;
-            
-        // 10%
-        case 10:
-            CCPR3L = 0b00011001;
-            break;
-            
-        // 20%
-        case 20:
-            CCPR3L = 0b00110011;
-            break;
-            
-        // 30%
-        case 30:
-            CCPR3L = 0b01001100;
-            break;
-            
-        // 40%
-        case 40:
-            CCPR3L = 0b01100110;
-            break;
-            
-        // 50%
-        case 50:
-            CCPR3L = 0b10000000;
-            break;
-            
-        // 60%
-        case 60:
-            CCPR3L = 0b10011001;
-            break;
-            
-        // 70%
-        case 70:
-            CCPR3L = 0b10110011;
-            break;
-            
-        // 80%
-        case 80:
-            CCPR3L = 0b11001100;
-            break;
-            
-        // 90%
-        case 90:
-            CCPR3L = 0b11100110;
-            break;
-            
-        // 100%
-        case 100:
-            CCPR3L = 0b11111110;
-            break;
-            
-        default:
-            return false;
-            break;
-    }
-    return true;
-}
-
-bool setPWM4(int per)
-{
-    switch(per)
-    {
-        // 0%
-        case 0:
-            CCPR4L = 0b00000000;
-            break;
-            
-        // 10%
-        case 10:
-            CCPR4L = 0b00011001;
-            break;
-            
-        // 20%
-        case 20:
-            CCPR4L = 0b00110011;
-            break;
-            
-        // 30%
-        case 30:
-            CCPR4L = 0b01001100;
-            break;
-            
-        // 40%
-        case 40:
-            CCPR4L = 0b01100110;
-            break;
-            
-        // 50%
-        case 50:
-            CCPR4L = 0b10000000;
-            break;
-            
-        // 60%??
-        case 60:
-            CCPR4L = 0b10011001;
-            break;
-            
-        // 70%
-        case 70:
-            CCPR4L = 0b10110011;
-            break;
-            
-        // 80%
-        case 80:
-            CCPR4L = 0b11001100;
-            break;
-            
-        // 90%
-        case 90:
-            CCPR4L = 0b11100110;
-            break;
-            
-        // 100%
-        case 100:
-            CCPR4L = 0b11111110;
-            break;
-            
-        default:
-            return false;
-    }
-    return true;
-}
-
+ 
 bool setPWM1(int per)
 {
-    switch(per)
-    {
-        // 0%
-        case 0:
-            CCPR1L = 0b00000000;
-            break;
-            
-        // 10%
-        case 10:
-            CCPR1L = 0b00011001;
-            break;
-            
-        // 20%
-        case 20:
-            CCPR1L = 0b00110011;
-            break;
-            
-        // 30%
-        case 30:
-            CCPR1L = 0b01001100;
-            break;
-            
-        // 40%
-        case 40:
-            CCPR1L = 0b01100110;
-            break;
-            
-        // 50%
-        case 50:
-            CCPR1L = 0b10000000;
-            break;
-            
-        // 60%??
-        case 60:
-            CCPR1L = 0b10011001;
-            break;
-            
-        // 70%
-        case 70:
-            CCPR1L = 0b10110011;
-            break;
-            
-        // 80%
-        case 80:
-            CCPR1L = 0b11001100;
-            break;
-            
-        // 90%
-        case 90:
-            CCPR1L = 0b11100110;
-            break;
-            
-        // 100%
-        case 100:
-            CCPR1L = 0b11111110;
-            break;
-            
-        default:
-            return false;
-    }
+    CCPR1L = per;
+    return true;
+}
+ 
+bool _pwm_set_lsb2(int per)
+{
+    CCPR2L = per;
+    return true;
+}
+
+bool _pwm_set_lsb3(int per)
+{
+    CCPR3L = per;
+    return true;
+}
+
+bool _pwm_set_lsb4(int per)
+{
+    CCPR4L = per;
     return true;
 }
